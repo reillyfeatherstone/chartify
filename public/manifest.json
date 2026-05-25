@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "Chartify",
+  "version": "1.0",
+  "description": "Easily and quickly turn lists of songs into Spotify Playlists.",
+  "action": {
+    "default_popup": "index.html"
+  }
+}
