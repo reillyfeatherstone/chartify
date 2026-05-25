@@ -1,10 +1,19 @@
 /// <reference types="chrome" />
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { extractChartData } from './content'
 import type { Song } from './content'
+import { PencilIcon, Trash2Icon } from 'lucide-react'
 
 function App() {
   const [songs, setSongs] = useState<Song[]>([])
+
+  useEffect(() => {
+    chrome.storage.local.get(['songs'], (result) => {
+      if (Array.isArray(result.songs)) {
+        setSongs(result.songs as Song[])
+      }
+    })
+  }, [])
 
   function getTabId() {
     return new Promise<number>((resolve) => {
@@ -20,17 +29,31 @@ function App() {
       func: extractChartData,
     })
     setSongs(results[0].result || [])
+    chrome.storage.local.set({ songs: results[0].result || [] })
+  }
+
+  function handleReset() {
+    setSongs([])
+    chrome.storage.local.set({ songs: [] })
   }
 
   return (
     <div className="w-100 p-8 max-w-xl mx-auto">
       <h1 className="text-2xl font-bold mb-4">Chartify</h1>
-      <button
-        onClick={() => handleGetSongs()}
-        className="mb-6 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-      >
-        Get Songs
-      </button>
+      <div className="flex justify-between">
+        <button
+          onClick={() => handleReset()}
+          className="mb-6 px-4 py-2 border text-black rounded hover:bg-gray-100 text-sm hover:cursor-pointer"
+        >
+          Reset
+        </button>
+        <button
+          onClick={() => handleGetSongs()}
+          className="mb-6 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm hover:cursor-pointer"
+        >
+          Get Songs
+        </button>
+      </div>
       {songs.length === 0 ? (
         <p className="text-gray-500">
           No songs found. Try on an Official Charts page.
@@ -38,7 +61,10 @@ function App() {
       ) : (
         <ul className="divide-y divide-gray-200">
           {songs.map((song, i) => (
-            <li key={i} className="py-3 flex items-start justify-between gap-2">
+            <li
+              key={i}
+              className="py-3 flex items-center justify-between gap-2"
+            >
               <div className="flex items-start gap-2">
                 <p className="font-bold">{i + 1}.</p>
 
@@ -48,14 +74,23 @@ function App() {
                 </div>
               </div>
 
-              <button
-                onClick={() =>
-                  setSongs((prev) => prev.filter((_, index) => index !== i))
-                }
-                className="text-red-500 text-sm hover:text-red-700"
-              >
-                Delete
-              </button>
+              <div className="flex">
+                <button className="p-2 rounded-md hover:bg-gray-100 transition hover:cursor-pointer">
+                  <PencilIcon className="w-4 h-4 text-gray-600 hover:text-gray-900" />
+                </button>
+                <button
+                  onClick={() =>
+                    setSongs((prev) => {
+                      const updated = prev.filter((_, index) => index !== i)
+                      chrome.storage.local.set({ songs: updated })
+                      return updated
+                    })
+                  }
+                  className="p-2 rounded-md hover:bg-red-50 transition hover:cursor-pointer"
+                >
+                  <Trash2Icon className="w-5 h-5 text-red-500" />
+                </button>
+              </div>
             </li>
           ))}
         </ul>
