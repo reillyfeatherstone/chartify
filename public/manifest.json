@@ -5,5 +5,16 @@
   "description": "Easily and quickly turn lists of songs into Spotify Playlists.",
   "action": {
     "default_popup": "index.html"
-  }
+  },
+  "permissions": ["scripting"],
+  "host_permissions": ["https://*/*", "http://*/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.officialcharts.com/charts/*"],
+      "js": ["content.js"]
+    }
+  ]
 }
