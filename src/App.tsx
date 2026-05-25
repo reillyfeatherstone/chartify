@@ -2,12 +2,36 @@
 import { useEffect, useState } from 'react'
 import { extractChartData } from './content'
 import type { Song } from './content'
-import { CheckIcon, CirclePlus, PencilIcon, Trash2Icon } from 'lucide-react'
+import {
+  CheckIcon,
+  CirclePlus,
+  CogIcon,
+  PencilIcon,
+  Trash2Icon,
+} from 'lucide-react'
+
+type SpotifyAPIAccess = {
+  spotifyClientID: string
+  spotifyClientSecret: string
+}
 
 function App() {
   const [songs, setSongs] = useState<Song[]>([])
   const [editingSong, setEditingSong] = useState<Song | null>(null)
   const [playlistName, setPlaylistName] = useState('')
+  const [showSettings, setShowSettings] = useState(false)
+  const [spotifyAPIAccess, setSpotifyAPIAccess] =
+    useState<SpotifyAPIAccess | null>(null)
+
+  useEffect(() => {
+    chrome.storage.local.get(['spotifyAPIAccess'], (result) => {
+      if (result.spotifyAPIAccess) {
+        setSpotifyAPIAccess(result.spotifyAPIAccess as SpotifyAPIAccess)
+      } else {
+        setShowSettings(true)
+      }
+    })
+  })
 
   useEffect(() => {
     chrome.storage.local.get(['songs'], (result) => {
@@ -68,9 +92,14 @@ function App() {
     chrome.storage.local.set({ songs: [], playlistName: '' })
   }
 
-  return (
+  return !showSettings && spotifyAPIAccess ? (
     <div className="w-100 p-8 max-w-xl mx-auto">
-      <h1 className="text-2xl font-bold mb-4">Chartify</h1>
+      <div className="flex">
+        <h1 className="text-2xl font-bold mb-4">Chartify</h1>
+        <button onClick={() => setShowSettings(true)}>
+          <CogIcon />
+        </button>
+      </div>
       <div className="flex justify-between">
         <button
           onClick={() => handleReset()}
@@ -194,6 +223,101 @@ function App() {
           </ul>
         </div>
       )}
+    </div>
+  ) : (
+    <SpotifyAccess
+      onSave={(access) => setSpotifyAPIAccess(access)}
+      onBack={() => setShowSettings(false)}
+    />
+  )
+}
+
+function SpotifyAccess({
+  onSave,
+  onBack,
+}: {
+  onSave: (access: SpotifyAPIAccess) => void
+  onBack: () => void
+}) {
+  const [clientId, setClientId] = useState('')
+  const [clientSecret, setClientSecret] = useState('')
+
+  useEffect(() => {
+    chrome.storage.local.get(['spotifyAPIAccess'], (result) => {
+      const spotifyAPIAccess = result.spotifyAPIAccess as
+        | SpotifyAPIAccess
+        | undefined
+      if (spotifyAPIAccess) {
+        setClientId(spotifyAPIAccess.spotifyClientID)
+        setClientSecret(spotifyAPIAccess.spotifyClientSecret)
+      }
+    })
+  }, [])
+
+  function handleSave() {
+    if (!clientId || !clientSecret) return
+    const access = {
+      spotifyClientID: clientId,
+      spotifyClientSecret: clientSecret,
+    }
+    chrome.storage.local.set({ spotifyAPIAccess: access })
+    onSave(access)
+    onBack()
+  }
+
+  function handleDelete() {
+    chrome.storage.local.remove(['spotifyAPIAccess'], () => {
+      setClientId('')
+      setClientSecret('')
+      onSave({ spotifyClientID: '', spotifyClientSecret: '' })
+    })
+  }
+
+  return (
+    <div className="w-100 p-8 max-w-xl mx-auto">
+      <h1 className="text-2xl font-bold mb-2">Chartify</h1>
+      <p className="text-gray-500 text-sm mb-6">
+        Enter your Spotify API Access to get started.
+      </p>
+      <div className="flex flex-col gap-3">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Client ID
+          </label>
+          <input
+            value={clientId}
+            onChange={(e) => setClientId(e.target.value)}
+            className="w-full border rounded px-2 py-1.5 text-sm"
+            placeholder="Spotify Client ID"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Client Secret
+          </label>
+          <input
+            value={clientSecret}
+            onChange={(e) => setClientSecret(e.target.value)}
+            className="w-full border rounded px-2 py-1.5 text-sm"
+            type="password"
+            placeholder="Spotify Client Secret"
+          />
+        </div>
+        <button
+          onClick={handleSave}
+          disabled={!clientId || !clientSecret}
+          className="mt-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm hover:cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          Save
+        </button>
+        <button
+          onClick={handleDelete}
+          disabled={!clientId && !clientSecret}
+          className="mt-2 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 text-sm hover:cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          Remove API Details
+        </button>
+      </div>
     </div>
   )
 }
