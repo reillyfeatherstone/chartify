@@ -8,9 +8,6 @@
   },
   "permissions": ["scripting", "activeTab", "storage"],
   "host_permissions": ["https://*/*", "http://*/*"],
-  "background": {
-    "service_worker": "background.js"
-  },
   "content_scripts": [
     {
       "matches": ["https://www.officialcharts.com/charts/*"],

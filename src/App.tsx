@@ -13,9 +13,11 @@ import {
 type SpotifyAPIAccess = {
   spotifyClientID: string
   spotifyClientSecret: string
+  valid: boolean
 }
 
 function App() {
+  console.log(chrome.identity.getRedirectURL())
   const [songs, setSongs] = useState<Song[]>([])
   const [editingSong, setEditingSong] = useState<Song | null>(null)
   const [playlistName, setPlaylistName] = useState('')
@@ -24,7 +26,7 @@ function App() {
     useState<SpotifyAPIAccess | null>(null)
 
   useEffect(() => {
-    chrome.storage.local.get(['spotifyAPIAccess'], (result) => {
+    chrome.storage.session.get(['spotifyAPIAccess'], (result) => {
       if (result.spotifyAPIAccess) {
         setSpotifyAPIAccess(result.spotifyAPIAccess as SpotifyAPIAccess)
       } else {
@@ -92,12 +94,14 @@ function App() {
     chrome.storage.local.set({ songs: [], playlistName: '' })
   }
 
-  return !showSettings && spotifyAPIAccess ? (
+  return !showSettings &&
+    spotifyAPIAccess &&
+    spotifyAPIAccess.valid === true ? (
     <div className="w-100 p-8 max-w-xl mx-auto">
-      <div className="flex">
-        <h1 className="text-2xl font-bold mb-4">Chartify</h1>
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-2xl font-bold">Chartify</h1>
         <button onClick={() => setShowSettings(true)}>
-          <CogIcon />
+          <CogIcon className="w-5 h-5 text-gray-800 hover:cursor-pointer" />
         </button>
       </div>
       <div className="flex justify-between">
@@ -241,9 +245,10 @@ function SpotifyAccess({
 }) {
   const [clientId, setClientId] = useState('')
   const [clientSecret, setClientSecret] = useState('')
+  const [error, setError] = useState('')
 
   useEffect(() => {
-    chrome.storage.local.get(['spotifyAPIAccess'], (result) => {
+    chrome.storage.session.get(['spotifyAPIAccess'], (result) => {
       const spotifyAPIAccess = result.spotifyAPIAccess as
         | SpotifyAPIAccess
         | undefined
@@ -254,22 +259,74 @@ function SpotifyAccess({
     })
   }, [])
 
-  function handleSave() {
+  async function handleSave() {
     if (!clientId || !clientSecret) return
     const access = {
       spotifyClientID: clientId,
       spotifyClientSecret: clientSecret,
+      valid: false,
     }
-    chrome.storage.local.set({ spotifyAPIAccess: access })
+    try {
+      const response = await checkApiDetails(access)
+      if (!response.success) {
+        chrome.storage.session.set({
+          spotifyAPIAccess: {
+            spotifyClientID: '',
+            spotifyClientSecret: '',
+            valid: false,
+          },
+        })
+        setClientId('')
+        setClientSecret('')
+        setError(response.error || 'Invalid Spotify API details')
+        return
+      }
+    } catch {
+      chrome.storage.session.set({
+        spotifyAPIAccess: {
+          spotifyClientID: '',
+          spotifyClientSecret: '',
+          valid: false,
+        },
+      })
+      setClientId('')
+      setClientSecret('')
+      setError('Invalid Spotify API details')
+      return
+    }
+
+    chrome.storage.session.set({ spotifyAPIAccess: { ...access, valid: true } })
     onSave(access)
     onBack()
   }
 
+  async function checkApiDetails(access: SpotifyAPIAccess) {
+    const body = new URLSearchParams({
+      grant_type: 'client_credentials',
+      client_id: access.spotifyClientID,
+      client_secret: access.spotifyClientSecret,
+    })
+
+    const response = await fetch('https://accounts.spotify.com/api/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body,
+    })
+
+    if (!response.ok) {
+      return { success: false, error: 'Invalid Spotify API details' }
+    }
+
+    return { success: true }
+  }
+
   function handleDelete() {
-    chrome.storage.local.remove(['spotifyAPIAccess'], () => {
+    chrome.storage.session.remove(['spotifyAPIAccess'], () => {
       setClientId('')
       setClientSecret('')
-      onSave({ spotifyClientID: '', spotifyClientSecret: '' })
+      onSave({ spotifyClientID: '', spotifyClientSecret: '', valid: false })
     })
   }
 
@@ -286,7 +343,15 @@ function SpotifyAccess({
           </label>
           <input
             value={clientId}
-            onChange={(e) => setClientId(e.target.value)}
+            onChange={(e) => {
+              setClientId(e.target.value)
+              chrome.storage.session.set({
+                spotifyAPIAccess: {
+                  spotifyClientID: e.target.value,
+                  spotifyClientSecret: clientSecret,
+                },
+              })
+            }}
             className="w-full border rounded px-2 py-1.5 text-sm"
             placeholder="Spotify Client ID"
           />
@@ -297,12 +362,21 @@ function SpotifyAccess({
           </label>
           <input
             value={clientSecret}
-            onChange={(e) => setClientSecret(e.target.value)}
+            onChange={(e) => {
+              setClientSecret(e.target.value)
+              chrome.storage.session.set({
+                spotifyAPIAccess: {
+                  spotifyClientID: clientId,
+                  spotifyClientSecret: e.target.value,
+                },
+              })
+            }}
             className="w-full border rounded px-2 py-1.5 text-sm"
             type="password"
             placeholder="Spotify Client Secret"
           />
         </div>
+        {error && <p className="text-red-500 text-sm">{error}</p>}
         <button
           onClick={handleSave}
           disabled={!clientId || !clientSecret}
