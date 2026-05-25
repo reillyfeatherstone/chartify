@@ -1,4 +1,4 @@
-type Song = {
+export type Song = {
   rank: number
   name: string
   artist: string
