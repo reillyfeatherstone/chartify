@@ -2,7 +2,7 @@ export type Song = {
   rank: number
   name: string
   artist: string
-  validated: boolean | 'loading'
+  spotifyUri: string | undefined
 }
 
 export function extractChartData(): Song[] {
@@ -24,7 +24,7 @@ export function extractChartData(): Song[] {
         rank: songs.length + 1,
         name: songNameEl?.textContent.trim() || '',
         artist: artistEl?.textContent.trim() || '',
-        validated: false,
+        spotifyUri: undefined,
       })
     }
   })

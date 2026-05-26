@@ -19,11 +19,6 @@ type SpotifyAPIAccess = {
   valid: boolean
 }
 
-type ValidatedSong = {
-  song: Song
-  validated: boolean
-}
-
 function App() {
   const [songs, setSongs] = useState<Song[]>([])
   const [editingSong, setEditingSong] = useState<Song | null>(null)
@@ -32,7 +27,7 @@ function App() {
   const [spotifyAPIAccess, setSpotifyAPIAccess] =
     useState<SpotifyAPIAccess | null>(null)
   const [validating, setValidating] = useState({ id: 0, validating: false })
-  const [validatedSongs, setValidatedSongs] = useState<ValidatedSong[]>([])
+  const [validatedSongs, setValidatedSongs] = useState<Song[]>([])
 
   useEffect(() => {
     chrome.storage.session.get(['spotifyAPIAccess'], (result) => {
@@ -81,7 +76,7 @@ function App() {
       rank,
       name: song?.name || '',
       artist: song?.artist || '',
-      validated: song?.validated || false,
+      spotifyUri: song?.spotifyUri || undefined,
     })
   }
 
@@ -139,6 +134,18 @@ function App() {
         const response = await fetch(fullUrl, {
           headers: { Authorization: `Bearer ${access_token}` },
         })
+
+        if (!response.ok) {
+          if (response.status === 401) {
+            alert('Bad or expired token')
+          } else if (response.status === 429) {
+            alert('Rate limit exceeded. Please try again later.')
+          } else {
+            alert('An error occurred while validating songs')
+          }
+          return
+        }
+
         const data = await response.json()
         const trackUrl = data.tracks.items[0]?.external_urls?.spotify
         if (!trackUrl) {
@@ -147,14 +154,11 @@ function App() {
         }
         setValidatedSongs((prev) => [
           ...prev,
-          {
-            song,
-            validated: trackUrl ? true : false,
-          },
+          { ...song, spotifyUri: trackUrl },
         ])
       }
-    } catch (error) {
-      alert('Error validating songs:' + error)
+    } catch {
+      alert('An unknown error occurred')
     }
   }
 
@@ -201,7 +205,7 @@ function App() {
             {validatedSongs.length > 0 && (
               <div className="mb-4 p-2 bg-yellow-100 border-l-4 border-yellow-500">
                 <p className="text-yellow-700 text-sm">
-                  {validatedSongs.filter((s) => s.validated).length} out of{' '}
+                  {validatedSongs.filter((s) => s.spotifyUri).length} out of{' '}
                   {validatedSongs.length} songs are valid.
                 </p>
               </div>
@@ -266,13 +270,13 @@ function App() {
                 </div>
 
                 <div className="flex">
-                  {validatedSongs.find((s) => s.song.rank === song.rank)
-                    ?.validated === true ? (
+                  {validatedSongs.find((s) => s.rank === song.rank)
+                    ?.spotifyUri ? (
                     <div className="p-2">
                       <Check className="w-4 h-4 text-green-500" />
                     </div>
-                  ) : validatedSongs.find((s) => s.song.rank === song.rank)
-                      ?.validated === false ? (
+                  ) : validatedSongs.find((s) => s.rank === song.rank)
+                      ?.spotifyUri === undefined ? (
                     <div className="p-2">
                       <p className="text-red-500 text-xs">
                         <XIcon className="w-4 h-4 inline-block" />
