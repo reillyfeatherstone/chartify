@@ -3,11 +3,14 @@ import { useEffect, useState } from 'react'
 import { extractChartData } from './content'
 import type { Song } from './content'
 import {
+  Check,
   CheckIcon,
   CirclePlus,
   CogIcon,
+  Loader2,
   PencilIcon,
   Trash2Icon,
+  XIcon,
 } from 'lucide-react'
 
 type SpotifyAPIAccess = {
@@ -16,14 +19,20 @@ type SpotifyAPIAccess = {
   valid: boolean
 }
 
+type ValidatedSong = {
+  song: Song
+  validated: boolean
+}
+
 function App() {
-  console.log(chrome.identity.getRedirectURL())
   const [songs, setSongs] = useState<Song[]>([])
   const [editingSong, setEditingSong] = useState<Song | null>(null)
   const [playlistName, setPlaylistName] = useState('')
   const [showSettings, setShowSettings] = useState(false)
   const [spotifyAPIAccess, setSpotifyAPIAccess] =
     useState<SpotifyAPIAccess | null>(null)
+  const [validating, setValidating] = useState({ id: 0, validating: false })
+  const [validatedSongs, setValidatedSongs] = useState<ValidatedSong[]>([])
 
   useEffect(() => {
     chrome.storage.session.get(['spotifyAPIAccess'], (result) => {
@@ -68,7 +77,12 @@ function App() {
 
   function handleEdit(rank: number) {
     const song = songs.find((s) => s.rank === rank)
-    setEditingSong({ rank, name: song?.name || '', artist: song?.artist || '' })
+    setEditingSong({
+      rank,
+      name: song?.name || '',
+      artist: song?.artist || '',
+      validated: song?.validated || false,
+    })
   }
 
   function saveEdit(rank: number) {
@@ -92,6 +106,56 @@ function App() {
     setSongs([])
     setPlaylistName('')
     chrome.storage.local.set({ songs: [], playlistName: '' })
+  }
+
+  async function validateSongs() {
+    try {
+      if (
+        !spotifyAPIAccess?.spotifyClientID ||
+        !spotifyAPIAccess?.spotifyClientSecret
+      ) {
+        return false
+      }
+
+      const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'client_credentials',
+          client_id: spotifyAPIAccess.spotifyClientID,
+          client_secret: spotifyAPIAccess.spotifyClientSecret,
+        }),
+      })
+      const { access_token } = await tokenRes.json()
+
+      const url = 'https://api.spotify.com/v1/search?q='
+      const market = 'GB'
+
+      for (const song of songs) {
+        setValidating({ id: song.rank, validating: true })
+        const raw = `${song.name} ${song.artist}`
+        const query = encodeURIComponent(raw)
+        const fullUrl = `${url}${query}&type=track&market=${market}&limit=1`
+        const response = await fetch(fullUrl, {
+          headers: { Authorization: `Bearer ${access_token}` },
+        })
+        const data = await response.json()
+        const trackUrl = data.tracks.items[0]?.external_urls?.spotify
+        if (!trackUrl) {
+          alert(fullUrl)
+          break
+        }
+        setValidatedSongs((prev) => [
+          ...prev,
+          {
+            song,
+            validated: trackUrl ? true : false,
+          },
+        ])
+      }
+    } catch (error) {
+      alert('Error validating songs:' + error)
+    }
   }
 
   return !showSettings &&
@@ -134,6 +198,15 @@ function App() {
       ) : (
         <div>
           <div className="mb-4">
+            {validatedSongs.length > 0 && (
+              <div className="mb-4 p-2 bg-yellow-100 border-l-4 border-yellow-500">
+                <p className="text-yellow-700 text-sm">
+                  {validatedSongs.filter((s) => s.validated).length} out of{' '}
+                  {validatedSongs.length} songs are valid.
+                </p>
+              </div>
+            )}
+
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Playlist Name
             </label>
@@ -145,7 +218,7 @@ function App() {
                 placeholder="Enter playlist name"
               />
               <button
-                // onClick={() => generatePlaylist()}
+                onClick={() => validateSongs()}
                 className="h-9 px-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm hover:cursor-pointer flex items-center gap-2"
               >
                 <CirclePlus className="w-4 h-4" /> Chartify
@@ -193,7 +266,23 @@ function App() {
                 </div>
 
                 <div className="flex">
-                  {editingSong?.rank === song.rank ? (
+                  {validatedSongs.find((s) => s.song.rank === song.rank)
+                    ?.validated === true ? (
+                    <div className="p-2">
+                      <Check className="w-4 h-4 text-green-500" />
+                    </div>
+                  ) : validatedSongs.find((s) => s.song.rank === song.rank)
+                      ?.validated === false ? (
+                    <div className="p-2">
+                      <p className="text-red-500 text-xs">
+                        <XIcon className="w-4 h-4 inline-block" />
+                      </p>
+                    </div>
+                  ) : validating.id === song.rank && validating.validating ? (
+                    <div className="p-2">
+                      <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
+                    </div>
+                  ) : editingSong?.rank === song.rank ? (
                     <button
                       onClick={() => saveEdit(song.rank)}
                       className="p-2 rounded-md hover:bg-blue-100 transition hover:cursor-pointer"

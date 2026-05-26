@@ -2,6 +2,7 @@ export type Song = {
   rank: number
   name: string
   artist: string
+  validated: boolean | 'loading'
 }
 
 export function extractChartData(): Song[] {
@@ -21,8 +22,9 @@ export function extractChartData(): Song[] {
     if (songNameEl || artistEl) {
       songs.push({
         rank: songs.length + 1,
-        name: songNameEl?.textContent?.trim() || '',
-        artist: artistEl?.textContent?.trim() || '',
+        name: songNameEl?.textContent.trim() || '',
+        artist: artistEl?.textContent.trim() || '',
+        validated: false,
       })
     }
   })
