@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react'
 import { extractChartData } from './content'
 import type { Song } from './content'
 import {
-  Check,
   CheckIcon,
   CirclePlus,
   CogIcon,
@@ -27,7 +26,6 @@ function App() {
   const [spotifyAPIAccess, setSpotifyAPIAccess] =
     useState<SpotifyAPIAccess | null>(null)
   const [validating, setValidating] = useState({ id: 0, validating: false })
-  const [validatedSongs, setValidatedSongs] = useState<Song[]>([])
 
   useEffect(() => {
     chrome.storage.session.get(['spotifyAPIAccess'], (result) => {
@@ -126,6 +124,8 @@ function App() {
       const url = 'https://api.spotify.com/v1/search?q='
       const market = 'GB'
 
+      let updatedSongs = [...songs]
+
       for (const song of songs) {
         setValidating({ id: song.rank, validating: true })
         const raw = `${song.name} ${song.artist}`
@@ -147,15 +147,13 @@ function App() {
         }
 
         const data = await response.json()
-        const trackUrl = data.tracks.items[0]?.external_urls?.spotify
-        if (!trackUrl) {
-          alert(fullUrl)
-          break
-        }
-        setValidatedSongs((prev) => [
-          ...prev,
-          { ...song, spotifyUri: trackUrl },
-        ])
+        const trackUrl = data.tracks.items[0]?.external_urls?.spotify ?? ''
+        updatedSongs = updatedSongs.map((s) =>
+          s.rank === song.rank ? { ...s, spotifyUri: trackUrl } : s,
+        )
+        setSongs(updatedSongs)
+        setValidating({ id: song.rank, validating: false })
+        chrome.storage.local.set({ songs: updatedSongs })
       }
     } catch {
       alert('An unknown error occurred')
@@ -202,11 +200,11 @@ function App() {
       ) : (
         <div>
           <div className="mb-4">
-            {validatedSongs.length > 0 && (
+            {songs.some((s) => s.spotifyUri) && (
               <div className="mb-4 p-2 bg-yellow-100 border-l-4 border-yellow-500">
                 <p className="text-yellow-700 text-sm">
-                  {validatedSongs.filter((s) => s.spotifyUri).length} out of{' '}
-                  {validatedSongs.length} songs are valid.
+                  {songs.filter((s) => s.spotifyUri).length} out of{' '}
+                  {songs.length} songs are valid.
                 </p>
               </div>
             )}
@@ -270,13 +268,11 @@ function App() {
                 </div>
 
                 <div className="flex">
-                  {validatedSongs.find((s) => s.rank === song.rank)
-                    ?.spotifyUri ? (
+                  {song.spotifyUri ? (
                     <div className="p-2">
-                      <Check className="w-4 h-4 text-green-500" />
+                      <CheckIcon className="w-4 h-4 text-green-500" />
                     </div>
-                  ) : validatedSongs.find((s) => s.rank === song.rank)
-                      ?.spotifyUri === undefined ? (
+                  ) : song.spotifyUri === '' ? (
                     <div className="p-2">
                       <p className="text-red-500 text-xs">
                         <XIcon className="w-4 h-4 inline-block" />
