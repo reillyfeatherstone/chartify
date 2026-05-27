@@ -180,9 +180,9 @@ function App() {
         }
 
         const data = await response.json()
-        const trackUrl = data.tracks.items[0]?.external_urls?.spotify ?? ''
+        const trackUri = data.tracks.items[0]?.uri ?? ''
         updatedSongs = updatedSongs.map((s) =>
-          s.rank === song.rank ? { ...s, spotifyUri: trackUrl } : s,
+          s.rank === song.rank ? { ...s, spotifyUri: trackUri } : s,
         )
         setSongs(updatedSongs)
         setValidating({ id: song.rank, validating: false })
@@ -198,7 +198,7 @@ function App() {
     const accessToken = await getAccessToken()
 
     if (songs.some((s) => !s.spotifyUri)) {
-      validateSongs()
+      await validateSongs()
     }
 
     try {
@@ -222,8 +222,16 @@ function App() {
           setError(playlist.error.message)
         }
       } else {
-        setError('')
-        setSuccess(`Playlist "${playlistName}" created successfully!`)
+        try {
+          console.log('Adding songs')
+          await addSongsToPlaylist(accessToken, playlist.id)
+          setError('')
+          setSuccess(`Playlist "${playlistName}" created successfully!`)
+        } catch {
+          setError(
+            `Playlist "${playlistName}" created, but unable to add all of the songs.`,
+          )
+        }
       }
     } catch {
       setError(
@@ -231,6 +239,43 @@ function App() {
       )
     }
     setIsLoading(false)
+  }
+
+  async function addSongsToPlaylist(accessToken: string, playlist: string) {
+    console.log('getting uris')
+    const uris = songs
+      .filter((s) => s.spotifyUri)
+      .map((s) => s.spotifyUri as string)
+
+    console.log('uris: ', uris)
+
+    try {
+      console.log('Trying to connect')
+      const result = await fetch(
+        `https://api.spotify.com/v1/playlists/${playlist}/items`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            uris,
+            position: 0,
+          }),
+        },
+      )
+
+      console.log('connecting??...')
+      if (!result.ok) {
+        console.log('fucked it')
+        const data = await result.json()
+        throw new Error(data.error?.message || 'Failed to add songs')
+      }
+    } catch (error) {
+      console.log('Really fucked it')
+      return error
+    }
   }
 
   return !showSettings && spotifyAPIAccess ? (
