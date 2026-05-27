@@ -14,28 +14,35 @@ import {
 
 type SpotifyAPIAccess = {
   spotifyClientID: string
-  spotifyClientSecret: string
-  valid: boolean
 }
+
+type UserToken =
+  | {
+      accessToken: string
+      refreshToken: string
+      expiresAt: number
+    }
+  | undefined
 
 function App() {
   const [songs, setSongs] = useState<Song[]>([])
   const [editingSong, setEditingSong] = useState<Song | null>(null)
   const [playlistName, setPlaylistName] = useState('')
-  const [showSettings, setShowSettings] = useState(false)
+  const [showSettings, setShowSettings] = useState(true)
   const [spotifyAPIAccess, setSpotifyAPIAccess] =
     useState<SpotifyAPIAccess | null>(null)
   const [validating, setValidating] = useState({ id: 0, validating: false })
 
   useEffect(() => {
-    chrome.storage.session.get(['spotifyAPIAccess'], (result) => {
-      if (result.spotifyAPIAccess) {
+    chrome.storage.local.get(['spotifyAPIAccess', 'userToken'], (result) => {
+      if (result.spotifyAPIAccess && result.userToken) {
         setSpotifyAPIAccess(result.spotifyAPIAccess as SpotifyAPIAccess)
+        setShowSettings(false)
       } else {
         setShowSettings(true)
       }
     })
-  })
+  }, [])
 
   useEffect(() => {
     chrome.storage.local.get(['songs'], (result) => {
@@ -101,26 +108,49 @@ function App() {
     chrome.storage.local.set({ songs: [], playlistName: '' })
   }
 
+  async function getAccessToken() {
+    const result = await chrome.storage.local.get(['userToken'])
+    const existing = result.userToken as UserToken
+
+    if (!existing || !spotifyAPIAccess) {
+      setShowSettings(true)
+      throw new Error('No token available, please log in again')
+    }
+
+    if (Date.now() < existing.expiresAt) {
+      return existing.accessToken
+    }
+
+    const response = await fetch('https://accounts.spotify.com/api/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: existing.refreshToken,
+        client_id: spotifyAPIAccess.spotifyClientID,
+      }),
+    })
+
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.error)
+
+    chrome.storage.local.set({
+      userToken: {
+        accessToken: data.access_token,
+        refreshToken: data.refresh_token ?? existing.refreshToken,
+        expiresAt: Date.now() + data.expires_in * 1000,
+      },
+    })
+
+    return data.access_token
+  }
+
   async function validateSongs() {
+    const accessToken = await getAccessToken()
+
     try {
-      if (
-        !spotifyAPIAccess?.spotifyClientID ||
-        !spotifyAPIAccess?.spotifyClientSecret
-      ) {
-        return false
-      }
-
-      const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          grant_type: 'client_credentials',
-          client_id: spotifyAPIAccess.spotifyClientID,
-          client_secret: spotifyAPIAccess.spotifyClientSecret,
-        }),
-      })
-      const { access_token } = await tokenRes.json()
-
       const url = 'https://api.spotify.com/v1/search?q='
       const market = 'GB'
 
@@ -132,7 +162,7 @@ function App() {
         const query = encodeURIComponent(raw)
         const fullUrl = `${url}${query}&type=track&market=${market}&limit=1`
         const response = await fetch(fullUrl, {
-          headers: { Authorization: `Bearer ${access_token}` },
+          headers: { Authorization: `Bearer ${accessToken}` },
         })
 
         if (!response.ok) {
@@ -160,9 +190,37 @@ function App() {
     }
   }
 
-  return !showSettings &&
-    spotifyAPIAccess &&
-    spotifyAPIAccess.valid === true ? (
+  async function createPlaylist(playlistName: string) {
+    const accessToken = await getAccessToken()
+
+    if (songs.some((s) => !s.spotifyUri)) {
+      validateSongs()
+    }
+    try {
+      const result = await fetch('https://api.spotify.com/v1/me/playlists', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: playlistName,
+          description: 'Created with Chartify',
+          public: false,
+        }),
+      })
+      const playlist = await result.json()
+      if (!result.ok) {
+        alert(JSON.stringify(playlist))
+      } else {
+        alert(`Playlist "${playlistName}" created successfully!`)
+      }
+    } catch {
+      alert('An unknown error occurred while creating the playlist')
+    }
+  }
+
+  return !showSettings && spotifyAPIAccess ? (
     <div className="w-100 p-8 max-w-xl mx-auto">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold">Chartify</h1>
@@ -220,7 +278,7 @@ function App() {
                 placeholder="Enter playlist name"
               />
               <button
-                onClick={() => validateSongs()}
+                onClick={() => createPlaylist(playlistName)}
                 className="h-9 px-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm hover:cursor-pointer flex items-center gap-2"
               >
                 <CirclePlus className="w-4 h-4" /> Chartify
@@ -333,89 +391,144 @@ function SpotifyAccess({
   onBack: () => void
 }) {
   const [clientId, setClientId] = useState('')
-  const [clientSecret, setClientSecret] = useState('')
   const [error, setError] = useState('')
+  const [clientIdLock, setClientIdLock] = useState(true)
 
   useEffect(() => {
-    chrome.storage.session.get(['spotifyAPIAccess'], (result) => {
+    chrome.storage.local.get(['spotifyAPIAccess'], (result) => {
       const spotifyAPIAccess = result.spotifyAPIAccess as
         | SpotifyAPIAccess
         | undefined
       if (spotifyAPIAccess) {
         setClientId(spotifyAPIAccess.spotifyClientID)
-        setClientSecret(spotifyAPIAccess.spotifyClientSecret)
+      } else {
+        setClientIdLock(false)
       }
     })
   }, [])
 
-  async function handleSave() {
-    if (!clientId || !clientSecret) return
-    const access = {
-      spotifyClientID: clientId,
-      spotifyClientSecret: clientSecret,
-      valid: false,
+  function generateRandomString(length: number) {
+    const possible =
+      'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+    const values = crypto.getRandomValues(new Uint8Array(length))
+    return values.reduce((acc, x) => acc + possible[x % possible.length], '')
+  }
+
+  const sha256 = async (plain: string) => {
+    const encoder = new TextEncoder()
+    const data = encoder.encode(plain)
+    return window.crypto.subtle.digest('SHA-256', data)
+  }
+
+  const base64encode = (input: ArrayBuffer) => {
+    return btoa(String.fromCharCode(...new Uint8Array(input)))
+      .replace(/=/g, '')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+  }
+
+  async function getUserToken(clientId: string) {
+    console.log('Starting getUserToken...')
+    const redirectUri = chrome.identity.getRedirectURL()
+    console.log('Redirect URI: ', redirectUri)
+    const scopes = 'playlist-modify-private playlist-modify-public'
+
+    const codeVerifier = generateRandomString(64)
+    const hashed = await sha256(codeVerifier)
+    const codeChallenge = base64encode(hashed)
+
+    // const scope = 'use-read-private user-read-email'
+    const authUrl = new URL('https://accounts.spotify.com/authorize')
+    const params = {
+      response_type: 'code',
+      client_id: clientId,
+      scope: scopes,
+      code_challenge_method: 'S256',
+      code_challenge: codeChallenge,
+      redirect_uri: redirectUri,
     }
-    try {
-      const response = await checkApiDetails(access)
-      if (!response.success) {
-        chrome.storage.session.set({
-          spotifyAPIAccess: {
-            spotifyClientID: '',
-            spotifyClientSecret: '',
-            valid: false,
-          },
-        })
-        setClientId('')
-        setClientSecret('')
-        setError(response.error || 'Invalid Spotify API details')
-        return
-      }
-    } catch {
-      chrome.storage.session.set({
-        spotifyAPIAccess: {
-          spotifyClientID: '',
-          spotifyClientSecret: '',
-          valid: false,
+
+    authUrl.search = new URLSearchParams(params).toString()
+
+    console.log('Auth URL: ', authUrl)
+
+    return new Promise<string>((resolve, reject) => {
+      chrome.identity.launchWebAuthFlow(
+        { url: authUrl.toString(), interactive: true },
+        async (redirectUrl) => {
+          if (!redirectUrl) return reject('No redirect URL')
+          console.log('There is a Redirect URL')
+
+          const code = new URL(redirectUrl).searchParams.get('code')
+          if (!code) return reject('No code in redirect URL')
+
+          console.log('Code: ', code)
+
+          const response = await fetch(
+            'https://accounts.spotify.com/api/token',
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+              },
+              body: new URLSearchParams({
+                client_id: clientId,
+                grant_type: 'authorization_code',
+                code,
+                redirect_uri: redirectUri,
+                code_verifier: codeVerifier,
+              }),
+            },
+          )
+
+          const data = await response.json()
+          if (!response.ok) return reject(data.error)
+
+          chrome.storage.local.set({
+            userToken: {
+              accessToken: data.access_token,
+              refreshToken: data.refresh_token,
+              expiresAt: Date.now() + data.expires_in * 1000,
+            },
+          })
+          resolve(data.access_token)
         },
-      })
-      setClientId('')
-      setClientSecret('')
-      setError('Invalid Spotify API details')
+      )
+    })
+  }
+
+  async function handleSave() {
+    console.log('Handling Save...')
+    if (!clientId) {
+      setError('Please enter a client ID')
       return
     }
 
-    chrome.storage.session.set({ spotifyAPIAccess: { ...access, valid: true } })
+    console.log('Client ID is set.')
+    console.log('Client ID: ', clientId)
+
+    try {
+      console.log('getting User Token')
+      const token = await getUserToken(clientId)
+      console.log('Token: ', token)
+    } catch {
+      setError('Failed to authenticate with Spotify')
+      return
+    }
+
+    const access = {
+      spotifyClientID: clientId,
+    }
+    chrome.storage.local.set({ spotifyAPIAccess: { ...access } })
     onSave(access)
     onBack()
   }
 
-  async function checkApiDetails(access: SpotifyAPIAccess) {
-    const body = new URLSearchParams({
-      grant_type: 'client_credentials',
-      client_id: access.spotifyClientID,
-      client_secret: access.spotifyClientSecret,
-    })
-
-    const response = await fetch('https://accounts.spotify.com/api/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body,
-    })
-
-    if (!response.ok) {
-      return { success: false, error: 'Invalid Spotify API details' }
-    }
-
-    return { success: true }
-  }
-
   function handleDelete() {
-    chrome.storage.session.remove(['spotifyAPIAccess'], () => {
+    chrome.storage.local.remove(['spotifyAPIAccess'], () => {
       setClientId('')
-      setClientSecret('')
-      onSave({ spotifyClientID: '', spotifyClientSecret: '', valid: false })
+      setClientIdLock(false)
+      onSave({ spotifyClientID: '' })
     })
   }
 
@@ -430,52 +543,54 @@ function SpotifyAccess({
           <label className="block text-sm font-medium text-gray-700 mb-1">
             Client ID
           </label>
-          <input
-            value={clientId}
-            onChange={(e) => {
-              setClientId(e.target.value)
-              chrome.storage.session.set({
-                spotifyAPIAccess: {
-                  spotifyClientID: e.target.value,
-                  spotifyClientSecret: clientSecret,
-                },
-              })
-            }}
-            className="w-full border rounded px-2 py-1.5 text-sm"
-            placeholder="Spotify Client ID"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Client Secret
-          </label>
-          <input
-            value={clientSecret}
-            onChange={(e) => {
-              setClientSecret(e.target.value)
-              chrome.storage.session.set({
-                spotifyAPIAccess: {
-                  spotifyClientID: clientId,
-                  spotifyClientSecret: e.target.value,
-                },
-              })
-            }}
-            className="w-full border rounded px-2 py-1.5 text-sm"
-            type="password"
-            placeholder="Spotify Client Secret"
-          />
+          <div className="relative">
+            <input
+              value={clientId}
+              disabled={clientIdLock}
+              onChange={(e) => {
+                setClientId(e.target.value)
+              }}
+              onSubmit={(e) => {
+                chrome.storage.local.set({
+                  spotifyAPIAccess: {
+                    spotifyClientID: e.target.value,
+                  },
+                })
+              }}
+              className="w-full border rounded px-2 py-1.5 text-sm disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+              placeholder="Spotify Client ID"
+            />
+            {clientIdLock ? (
+              <button
+                onClick={() => setClientIdLock(false)}
+                className="absolute right-4 top-1/2 -translate-y-1/2 hover:cursor-pointer"
+              >
+                <PencilIcon className="w-4 h-4 text-gray-400 hover:text-gray-600" />
+              </button>
+            ) : null}
+          </div>
+          <p className="mt-2 text-gray-500">
+            Create an API client ID using{' '}
+            <a
+              href="https://developer.spotify.com/dashboard/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:text-blue-900 underline underline-offset-1"
+            >
+              Spotify's Developer Dashboard
+            </a>
+          </p>
         </div>
         {error && <p className="text-red-500 text-sm">{error}</p>}
         <button
           onClick={handleSave}
-          disabled={!clientId || !clientSecret}
+          disabled={!clientId}
           className="mt-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm hover:cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Save
         </button>
         <button
           onClick={handleDelete}
-          disabled={!clientId && !clientSecret}
           className="mt-2 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 text-sm hover:cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Remove API Details
