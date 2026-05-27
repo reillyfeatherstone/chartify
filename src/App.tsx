@@ -32,6 +32,9 @@ function App() {
   const [spotifyAPIAccess, setSpotifyAPIAccess] =
     useState<SpotifyAPIAccess | null>(null)
   const [validating, setValidating] = useState({ id: 0, validating: false })
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+  const [isLoading, setIsLoading] = useState(false)
 
   useEffect(() => {
     chrome.storage.local.get(['spotifyAPIAccess', 'userToken'], (result) => {
@@ -191,11 +194,13 @@ function App() {
   }
 
   async function createPlaylist(playlistName: string) {
+    setIsLoading(true)
     const accessToken = await getAccessToken()
 
     if (songs.some((s) => !s.spotifyUri)) {
       validateSongs()
     }
+
     try {
       const result = await fetch('https://api.spotify.com/v1/me/playlists', {
         method: 'POST',
@@ -211,13 +216,21 @@ function App() {
       })
       const playlist = await result.json()
       if (!result.ok) {
-        alert(JSON.stringify(playlist))
+        if (playlist.error.message === 'Missing required field: name') {
+          setError('Enter a playlist name')
+        } else {
+          setError(playlist.error.message)
+        }
       } else {
-        alert(`Playlist "${playlistName}" created successfully!`)
+        setError('')
+        setSuccess(`Playlist "${playlistName}" created successfully!`)
       }
     } catch {
-      alert('An unknown error occurred while creating the playlist')
+      setError(
+        'An unknown error occurred while creating the playlist. Try again later.',
+      )
     }
+    setIsLoading(false)
   }
 
   return !showSettings && spotifyAPIAccess ? (
@@ -267,6 +280,18 @@ function App() {
               </div>
             )}
 
+            {error && (
+              <div className="mb-4 p-2 bg-red-100 border-l-4 border-red-500">
+                <p className="text-red-700 text-sm">{error}</p>
+              </div>
+            )}
+
+            {success && (
+              <div className="mb-4 p-2 bg-green-100 border-l-4 border-green-500">
+                <p className="text-green-700 text-sm">{success}</p>
+              </div>
+            )}
+
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Playlist Name
             </label>
@@ -274,14 +299,22 @@ function App() {
               <input
                 value={playlistName}
                 onChange={(e) => handlePlaylistName(e.target.value)}
-                className="h-9 w-full border rounded px-2 py-0.5 text-sm"
+                className={`h-9 w-full border rounded px-2 py-0.5 text-sm ${
+                  error === 'Enter a playlist name' ? 'border-red-500' : ''
+                }`}
                 placeholder="Enter playlist name"
               />
               <button
                 onClick={() => createPlaylist(playlistName)}
                 className="h-9 px-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm hover:cursor-pointer flex items-center gap-2"
+                disabled={isLoading}
               >
-                <CirclePlus className="w-4 h-4" /> Chartify
+                {isLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <CirclePlus className="w-4 h-4" />
+                )}
+                Chartify
               </button>
             </div>
           </div>
