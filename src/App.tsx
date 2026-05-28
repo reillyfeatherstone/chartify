@@ -176,7 +176,7 @@ function App() {
           } else {
             alert('An error occurred while validating songs')
           }
-          return
+          return songs
         }
 
         const data = await response.json()
@@ -184,12 +184,14 @@ function App() {
         updatedSongs = updatedSongs.map((s) =>
           s.rank === song.rank ? { ...s, spotifyUri: trackUri } : s,
         )
-        setSongs(updatedSongs)
         setValidating({ id: song.rank, validating: false })
+        setSongs(updatedSongs)
         chrome.storage.local.set({ songs: updatedSongs })
       }
+      return updatedSongs
     } catch {
       alert('An unknown error occurred')
+      return songs
     }
   }
 
@@ -197,8 +199,10 @@ function App() {
     setIsLoading(true)
     const accessToken = await getAccessToken()
 
+    let validatedSongs = songs
+
     if (songs.some((s) => !s.spotifyUri)) {
-      await validateSongs()
+      validatedSongs = await validateSongs()
     }
 
     try {
@@ -214,7 +218,9 @@ function App() {
           public: false,
         }),
       })
+
       const playlist = await result.json()
+
       if (!result.ok) {
         if (playlist.error.message === 'Missing required field: name') {
           setError('Enter a playlist name')
@@ -223,8 +229,7 @@ function App() {
         }
       } else {
         try {
-          console.log('Adding songs')
-          await addSongsToPlaylist(accessToken, playlist.id)
+          await addSongsToPlaylist(accessToken, playlist.id, validatedSongs)
           setError('')
           setSuccess(`Playlist "${playlistName}" created successfully!`)
         } catch {
@@ -241,16 +246,16 @@ function App() {
     setIsLoading(false)
   }
 
-  async function addSongsToPlaylist(accessToken: string, playlist: string) {
-    console.log('getting uris')
+  async function addSongsToPlaylist(
+    accessToken: string,
+    playlist: string,
+    songs: Song[],
+  ) {
     const uris = songs
       .filter((s) => s.spotifyUri)
       .map((s) => s.spotifyUri as string)
 
-    console.log('uris: ', uris)
-
     try {
-      console.log('Trying to connect')
       const result = await fetch(
         `https://api.spotify.com/v1/playlists/${playlist}/items`,
         {
@@ -266,14 +271,11 @@ function App() {
         },
       )
 
-      console.log('connecting??...')
       if (!result.ok) {
-        console.log('fucked it')
         const data = await result.json()
         throw new Error(data.error?.message || 'Failed to add songs')
       }
     } catch (error) {
-      console.log('Really fucked it')
       return error
     }
   }
@@ -506,9 +508,8 @@ function SpotifyAccess({
   }
 
   async function getUserToken(clientId: string) {
-    console.log('Starting getUserToken...')
     const redirectUri = chrome.identity.getRedirectURL()
-    console.log('Redirect URI: ', redirectUri)
+
     const scopes = 'playlist-modify-private playlist-modify-public'
 
     const codeVerifier = generateRandomString(64)
@@ -528,19 +529,14 @@ function SpotifyAccess({
 
     authUrl.search = new URLSearchParams(params).toString()
 
-    console.log('Auth URL: ', authUrl)
-
     return new Promise<string>((resolve, reject) => {
       chrome.identity.launchWebAuthFlow(
         { url: authUrl.toString(), interactive: true },
         async (redirectUrl) => {
           if (!redirectUrl) return reject('No redirect URL')
-          console.log('There is a Redirect URL')
 
           const code = new URL(redirectUrl).searchParams.get('code')
           if (!code) return reject('No code in redirect URL')
-
-          console.log('Code: ', code)
 
           const response = await fetch(
             'https://accounts.spotify.com/api/token',
@@ -576,19 +572,13 @@ function SpotifyAccess({
   }
 
   async function handleSave() {
-    console.log('Handling Save...')
     if (!clientId) {
       setError('Please enter a client ID')
       return
     }
 
-    console.log('Client ID is set.')
-    console.log('Client ID: ', clientId)
-
     try {
-      console.log('getting User Token')
-      const token = await getUserToken(clientId)
-      console.log('Token: ', token)
+      await getUserToken(clientId)
     } catch {
       setError('Failed to authenticate with Spotify')
       return
